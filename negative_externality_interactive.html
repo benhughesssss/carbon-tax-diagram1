@@ -1,0 +1,366 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.controls { display: flex; align-items: center; gap: 20px; padding: 12px 16px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); margin-bottom: 14px; flex-wrap: wrap; }
+.ctrl-group { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-text-secondary); }
+.ctrl-group input[type=range] { width: 90px; }
+.ctrl-group span { font-size: 12px; font-weight: 500; color: var(--color-text-primary); min-width: 28px; }
+.btn { font-size: 12px; padding: 5px 12px; cursor: pointer; border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); transition: background 0.15s; }
+.btn:hover { background: var(--color-background-secondary); }
+.btn.active { background: #EEEDFE; color: #3C3489; border-color: #AFA9EC; }
+.tooltip { position: absolute; background: var(--color-background-primary); border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 6px 10px; font-size: 12px; color: var(--color-text-primary); pointer-events: none; opacity: 0; transition: opacity 0.15s; white-space: nowrap; z-index: 10; line-height: 1.5; }
+.diagram-wrap { position: relative; }
+@media (prefers-color-scheme: dark) {
+  .btn.active { background: #3C3489; color: #CECBF6; border-color: #534AB7; }
+}
+</style>
+
+<h2 class="sr-only">Interactive negative externality diagram showing market failure from carbon emissions and the effect of a Pigouvian carbon tax</h2>
+
+<div class="controls">
+  <div class="ctrl-group">
+    <span>Tax size</span>
+    <input type="range" id="taxSlider" min="20" max="100" value="60" step="1">
+    <span id="taxVal">£60</span>
+  </div>
+  <button class="btn active" id="btnBase" onclick="setMode('base')">No intervention</button>
+  <button class="btn" id="btnTax" onclick="setMode('tax')">With carbon tax</button>
+</div>
+
+<div class="diagram-wrap">
+  <div class="tooltip" id="tip"></div>
+  <canvas id="c" width="680" height="480" style="width:100%;display:block;"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const tip = document.getElementById('tip');
+let mode = 'base';
+let taxPx = 60;
+
+const PAD = { l: 72, r: 40, t: 36, b: 56 };
+const W = 680, H = 480;
+const PLOT_W = W - PAD.l - PAD.r;
+const PLOT_H = H - PAD.t - PAD.b;
+
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+const COL = {
+  axis:   dark ? '#888780' : '#5F5E5A',
+  grid:   dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+  text:   dark ? '#c2c0b6' : '#3d3d3a',
+  textSm: dark ? '#9c9a92' : '#73726c',
+  demand: dark ? '#85B7EB' : '#185FA5',
+  mpc:    dark ? '#5DCAA5' : '#0F6E56',
+  msc:    dark ? '#F0997B' : '#993C1D',
+  dwl:    dark ? 'rgba(226,75,74,0.22)' : 'rgba(226,75,74,0.18)',
+  dwlStr: dark ? '#E24B4A' : '#A32D2D',
+  gain:   dark ? 'rgba(29,158,117,0.18)' : 'rgba(29,158,117,0.14)',
+  gainStr:dark ? '#1D9E75' : '#0F6E56',
+  taxFill:dark ? 'rgba(127,119,221,0.16)' : 'rgba(127,119,221,0.13)',
+  taxStr: dark ? '#7F77DD' : '#534AB7',
+  dot:    dark ? '#ffffff' : '#2C2C2A',
+  dash:   dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.18)',
+  bg:     dark ? '#1a1917' : '#ffffff',
+};
+
+function toScreen(qFrac, pFrac) {
+  return {
+    x: PAD.l + qFrac * PLOT_W,
+    y: PAD.t + (1 - pFrac) * PLOT_H
+  };
+}
+
+function demandY(qFrac) { return 0.92 - 0.82 * qFrac; }
+function mpcY(qFrac) { return 0.08 + 0.72 * qFrac; }
+function mscY(qFrac, tax) { return mpcY(qFrac) + tax / PLOT_H; }
+
+function intersect(f1, f2, tax) {
+  for (let q = 0; q <= 1; q += 0.0005) {
+    if (f1(q) <= f2(q, tax)) return q;
+  }
+  return 0.5;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  const tax = taxPx;
+  const taxFrac = tax / PLOT_H;
+
+  const qm = intersect(demandY, (q) => mpcY(q), 0);
+  const qs = intersect(demandY, (q, t) => mscY(q, t), tax);
+  const pm = demandY(qm);
+  const ps = demandY(qs);
+  const pMscAtQm = mscY(qm, tax);
+
+  const SM = toScreen(qm, pm);
+  const SS = toScreen(qs, ps);
+  const SMscQm = toScreen(qm, pMscAtQm);
+  const SMpcQs = toScreen(qs, mpcY(qs));
+
+  if (mode === 'tax') {
+    ctx.beginPath();
+    ctx.moveTo(SS.x, SS.y);
+    ctx.lineTo(SMpcQs.x, SMpcQs.y);
+    ctx.lineTo(toScreen(qs, 0).x, toScreen(qs, 0).y);
+    ctx.lineTo(toScreen(qs + 0.001, 0).x, PAD.t + PLOT_H);
+    ctx.lineTo(SS.x, SS.y);
+    ctx.closePath();
+    ctx.fillStyle = COL.taxFill;
+    ctx.fill();
+  }
+
+  if (mode === 'base') {
+    ctx.beginPath();
+    ctx.moveTo(SS.x, SS.y);
+    ctx.lineTo(SM.x, SM.y);
+    ctx.lineTo(SMscQm.x, SMscQm.y);
+    ctx.closePath();
+    ctx.fillStyle = COL.dwl;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(SS.x, SS.y);
+    ctx.lineTo(SM.x, SM.y);
+    ctx.lineTo(SMscQm.x, SMscQm.y);
+    ctx.closePath();
+    ctx.strokeStyle = COL.dwlStr;
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(SS.x, SS.y);
+    ctx.lineTo(SM.x, SM.y);
+    ctx.lineTo(SMscQm.x, SMscQm.y);
+    ctx.closePath();
+    ctx.fillStyle = COL.gain;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(SS.x, SS.y);
+    ctx.lineTo(SM.x, SM.y);
+    ctx.lineTo(SMscQm.x, SMscQm.y);
+    ctx.closePath();
+    ctx.strokeStyle = COL.gainStr;
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawDash(x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = COL.dash;
+    ctx.lineWidth = 0.8;
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  drawDash(SS.x, SS.y, SS.x, PAD.t + PLOT_H);
+  drawDash(SS.x, SS.y, PAD.l, SS.y);
+  drawDash(SM.x, SM.y, SM.x, PAD.t + PLOT_H);
+  drawDash(SM.x, SM.y, PAD.l, SM.y);
+  if (mode === 'tax') {
+    drawDash(SMpcQs.x, SMpcQs.y, PAD.l, SMpcQs.y);
+  }
+
+  function curve(fn, tax, col, dash) {
+    ctx.beginPath();
+    for (let q = 0; q <= 1; q += 0.005) {
+      const p = fn(q, tax);
+      if (p < 0 || p > 1) continue;
+      const s = toScreen(q, p);
+      q === 0 ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y);
+    }
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    if (dash) { ctx.setLineDash([8, 5]); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  curve(demandY, 0, COL.demand, false);
+  curve(mpcY, 0, COL.mpc, false);
+  curve(mscY, tax, COL.msc, true);
+
+  if (mode === 'tax') {
+    const taxTop = toScreen(qs, mscY(qs, tax));
+    const taxBot = toScreen(qs, mpcY(qs));
+    ctx.beginPath();
+    ctx.moveTo(taxTop.x + 12, taxTop.y);
+    ctx.lineTo(taxTop.x + 12, taxBot.y);
+    ctx.strokeStyle = COL.taxStr;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(taxTop.x + 8, taxTop.y);
+    ctx.lineTo(taxTop.x + 16, taxTop.y);
+    ctx.moveTo(taxTop.x + 8, taxBot.y);
+    ctx.lineTo(taxTop.x + 16, taxBot.y);
+    ctx.stroke();
+    const tmid = (taxTop.y + taxBot.y) / 2;
+    ctx.fillStyle = COL.taxStr;
+    ctx.font = '500 11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('tax = £' + Math.round(tax), taxTop.x + 18, tmid + 4);
+  }
+
+  ctx.strokeStyle = COL.axis;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(PAD.l, PAD.t);
+  ctx.lineTo(PAD.l, PAD.t + PLOT_H + 8);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(PAD.l - 8, PAD.t + PLOT_H);
+  ctx.lineTo(PAD.l + PLOT_W + 8, PAD.t + PLOT_H);
+  ctx.stroke();
+
+  ctx.fillStyle = COL.text;
+  ctx.font = '500 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Quantity of output (carbon emissions)', PAD.l + PLOT_W / 2, H - 8);
+
+  ctx.save();
+  ctx.translate(14, PAD.t + PLOT_H / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText('Price / Cost (£)', 0, 0);
+  ctx.restore();
+
+  function xLabel(qFrac, label, sub) {
+    const s = toScreen(qFrac, 0);
+    ctx.strokeStyle = COL.axis;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(s.x, s.y - 3);
+    ctx.lineTo(s.x, s.y + 5);
+    ctx.stroke();
+    ctx.fillStyle = COL.text;
+    ctx.font = '600 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, s.x, s.y + 18);
+    if (sub) {
+      ctx.fillStyle = COL.textSm;
+      ctx.font = '11px sans-serif';
+      ctx.fillText(sub, s.x, s.y + 30);
+    }
+  }
+
+  function yLabel(pFrac, label) {
+    const s = toScreen(0, pFrac);
+    ctx.strokeStyle = COL.axis;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.l - 5, s.y);
+    ctx.lineTo(PAD.l + 3, s.y);
+    ctx.stroke();
+    ctx.fillStyle = COL.text;
+    ctx.font = '600 12px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(label, PAD.l - 8, s.y + 4);
+  }
+
+  if (mode === 'base') {
+    xLabel(qm, 'Qm', 'market');
+    xLabel(qs, 'Q*', 'optimal');
+    yLabel(pm, 'Pm');
+    yLabel(ps, 'P*');
+  } else {
+    xLabel(qm, 'Qm', 'old output');
+    xLabel(qs, 'Q*', 'new output');
+    yLabel(ps, 'P*');
+    yLabel(mpcY(qs), 'Pp');
+  }
+
+  function curveLabel(fn, tax, col, label, qPos) {
+    const p = fn(qPos, tax);
+    if (p < 0 || p > 1) return;
+    const s = toScreen(qPos, p);
+    ctx.fillStyle = col;
+    ctx.font = '600 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, s.x + 5, s.y - 5);
+  }
+
+  curveLabel(demandY, 0, COL.demand, 'D = MPB', 0.82);
+  curveLabel(mpcY, 0, COL.mpc, 'MPC (supply)', 0.8);
+  curveLabel(mscY, tax, COL.msc, 'MSC', 0.72);
+
+  function dot(x, y, col) {
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.strokeStyle = COL.bg;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  dot(SM.x, SM.y, COL.mpc);
+  dot(SS.x, SS.y, COL.msc);
+
+  const midDWL = {
+    x: (SS.x + SM.x + SMscQm.x) / 3,
+    y: (SS.y + SM.y + SMscQm.y) / 3
+  };
+
+  if (mode === 'base') {
+    ctx.fillStyle = COL.dwlStr;
+    ctx.font = '600 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('DWL', midDWL.x + 18, midDWL.y);
+  } else {
+    ctx.fillStyle = COL.gainStr;
+    ctx.font = '600 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('welfare', midDWL.x + 18, midDWL.y - 4);
+    ctx.fillText('gain', midDWL.x + 18, midDWL.y + 8);
+  }
+}
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('btnBase').classList.toggle('active', m === 'base');
+  document.getElementById('btnTax').classList.toggle('active', m === 'tax');
+  draw();
+}
+
+document.getElementById('taxSlider').addEventListener('input', function() {
+  taxPx = parseInt(this.value);
+  document.getElementById('taxVal').textContent = '£' + taxPx;
+  draw();
+});
+
+canvas.addEventListener('mousemove', function(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const qFrac = (mx - PAD.l) / PLOT_W;
+  if (qFrac < 0 || qFrac > 1) { tip.style.opacity = 0; return; }
+  const tax = taxPx;
+  const d = demandY(qFrac);
+  const mpc = mpcY(qFrac);
+  const msc = mscY(qFrac, tax);
+  const extCost = Math.max(0, msc - mpc);
+
+  tip.style.opacity = 1;
+  tip.style.left = (e.clientX - rect.left + 12) + 'px';
+  tip.style.top = (e.clientY - rect.top - 10) + 'px';
+
+  const pScale = 200;
+  tip.innerHTML =
+    '<span style="color:' + COL.demand + ';font-weight:500">MPB</span> £' + Math.round(d * pScale) +
+    '&nbsp;&nbsp;<span style="color:' + COL.mpc + ';font-weight:500">MPC</span> £' + Math.round(mpc * pScale) +
+    '&nbsp;&nbsp;<span style="color:' + COL.msc + ';font-weight:500">MSC</span> £' + Math.round(msc * pScale) +
+    '<br><span style="color:' + COL.textSm + '">External cost: £' + Math.round(extCost * pScale) + ' per unit</span>';
+});
+
+canvas.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
+
+draw();
+</script>
